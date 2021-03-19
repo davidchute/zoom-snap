@@ -11,6 +11,7 @@ description: |
 
 grade: stable
 confinement: strict
+compression: lzo
 
 architectures:
   - build-on: amd64
@@ -18,10 +19,15 @@ architectures:
 
 apps:
   zoom-client:
-    command: desktop-launch $SNAP/snap/command-chain/alsa-launch $SNAP/bin/launcher.sh
+    command: bin/launcher.sh
+    command-chain:
+       - bin/desktop-launch
+       - snap/command-chain/alsa-launch
+       - bin/private-fontcache
     environment:
       LD_LIBRARY_PATH: $SNAP/zoom/Qt/lib:$SNAP/zoom:$LD_LIBRARY_PATH
       DISABLE_WAYLAND: 1
+      ALWAYS_USE_PULSEAUDIO: 1
     desktop: usr/share/applications/Zoom.desktop
     plugs:
       - audio-playback
@@ -39,7 +45,12 @@ apps:
       - screen-inhibit-control
       - system-observe
       - unity7
+      - wayland
       - x11
+
+hooks:
+  configure:
+    plugs: [ desktop ]
 
 layout:
   /sbin/killall5:
@@ -92,7 +103,8 @@ parts:
     override-build: |
       # unset hardcoded LD_LIBRARY_PATHs
       sed -i s/D_LIBRAR/XXXXXXXX/g opt/zoom/ZoomLauncher
-      sed -i s/LD_LIBRARY_PATH/XXXXXXXXXX_PATH/g opt/zoom/libQt5Network.so.5.9.6 opt/zoom/zopen
+      sed -i s/T_AUTO_S/XXXXXXXX/g opt/zoom/ZoomLauncher
+      sed -i s/LD_LIBRARY_PATH/XXXXXXXXXX_PATH/g opt/zoom/libQt5Network.so.5.*.* opt/zoom/zopen
 
       sed -i "s;Prefix=/opt;Prefix=/snap/$SNAPCRAFT_PROJECT_NAME/current;" opt/zoom/qt.conf
       cp -av opt/zoom $SNAPCRAFT_PART_INSTALL/
@@ -107,8 +119,12 @@ parts:
       sed -i 's|Exec=.*|Exec=zoom-client %U|g' \
         $SNAPCRAFT_PART_INSTALL/usr/share/applications/Zoom.desktop
 
-      VER="$(cat $SNAPCRAFT_PART_INSTALL/zoom/version.txt)"
-      snapcraftctl set-version $VER
+      VER="$(strings $SNAPCRAFT_PART_INSTALL/zoom/zoom|grep \
+           "($(cat $SNAPCRAFT_PART_INSTALL/zoom/version.txt|sed 's/^[0-9].[0-9].//'))" | \
+           sed 's/(//;s/)//;s/ /-/')"
+      snapcraftctl set-version "$VER"
+    build-packages:
+      - binutils
     stage-packages:
       - ibus
       - libatk-bridge2.0-0
@@ -123,6 +139,8 @@ parts:
       - libgl1-mesa-dri
       - libgl1-mesa-glx
       - libglib2.0-0
+      - libgnutls30
+      - libgnutls-openssl27
       - libnspr4
       - libnss3
       - libpcre3
@@ -155,8 +173,10 @@ parts:
       - libsqlite3-0
       - libssl1.0.0
       - libtinfo5
+      - libwayland-client0
       - libwayland-cursor0
       - libwayland-egl1
+      - libwayland-server0
       - libx11-6
       - libxcb-image0
       - libxcb-keysyms1
@@ -192,10 +212,16 @@ parts:
       cp -a usr/share/icons/Yaru/cursor.theme $SNAPCRAFT_PART_INSTALL/usr/share/icons/Yaru/
     build-packages:
       - wget
+  snap-helpers:
+    plugin: dump
+    after: [ yaru-cursors ]
+    source: snap/local/scripts
+    organize:
+      private-fontcache: bin/private-fontcache
   cleanup:
     source: .
     plugin: nil
-    after: [ yaru-cursors ]
+    after: [ snap-helpers ]
     override-build: |
       mkdir -p $SNAPCRAFT_PART_INSTALL/bin
       cp -av launcher.sh $SNAPCRAFT_PART_INSTALL/bin/
@@ -214,7 +240,7 @@ parts:
       rm usr/lib/$SNAPCRAFT_ARCH_TRIPLET/libssl.so.1.1
       rm usr/lib/$SNAPCRAFT_ARCH_TRIPLET/libcrypto.so.1.1
       # clean up unused cruft
-      for CRUFT in bug lintian man fonts themes; do
+      for CRUFT in bug lintian man themes; do
         rm -rf $SNAPCRAFT_PRIME/usr/share/$CRUFT
       done
       # drop unused icon themes (keep cursors)
